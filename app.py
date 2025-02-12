@@ -21,7 +21,7 @@ st.set_page_config(
 def initialize_gemini():
     api_key = st.secrets["GOOGLE_API_KEY"]
     genai.configure(api_key=api_key)
-    # Use gemini-pro for text and gemini-pro-vision for images
+    # Use gemini-flash for text and images
     models = {
         'text': genai.GenerativeModel('gemini-1.5-flash'),
         'vision': genai.GenerativeModel('gemini-1.5-flash')
@@ -90,13 +90,13 @@ def create_prompt(context: str, input_type: str) -> str:
     2. Use this exact first line: graph TD
     3. Preserve ALL text from the input VERBATIM - do not paraphrase or modify text
     4. Follow these syntax rules:
-       - Node IDs must be unique letters (A, B, C, etc.)
-       - Text must be in square brackets: [Your Text Here]
+       - Node IDs must be unique letters or alphanumeric (A, B1, C2, etc.)
+       - Regular nodes: A[Text Here]
+       - Decision nodes: A{{Text Here}}  
        - Connections use -->
        - For conditional paths, use -- "condition" -->
        - Subgraphs must be properly closed with end
-       - No spaces in subgraph names, use quotes for multiple words
-       - Remove any parentheses () from node texts unless part of the original text
+       - No spaces in subgraph names, use underscore or quotes
        - No special characters in node text that could break Mermaid syntax
     
     5. For visual elements:
@@ -105,16 +105,16 @@ def create_prompt(context: str, input_type: str) -> str:
          content
          end
        - Direction should be TD (top-down) unless specified otherwise
-       - Use diamonds {} for decision nodes
-       - Use rectangles [] for process nodes
+       - For decision nodes, always use double curly braces: {{}}
+       - For process nodes, use regular brackets: []
     
     6. Example of correct syntax:
        ```mermaid
        graph TD
-           A[Start] --> B{Decision}
+           A[Start] --> B{{Decision}}
            B -- "Yes" --> C[Process]
            B -- "No" --> D[End]
-           subgraph "Process Group"
+           subgraph "Process_Group"
                C --> E[Next Step]
            end
        ```
@@ -146,23 +146,39 @@ def clean_mermaid_code(code: str) -> str:
     code = code.replace(' )', ')')  # Remove space before closing parenthesis
     code = code.replace('[ ', '[')  # Remove space after opening bracket
     code = code.replace(' ]', ']')  # Remove space before closing bracket
+    code = code.replace('{', '{{')  # Fix decision node syntax
+    code = code.replace('}', '}}')  # Fix decision node syntax
     
     # Ensure proper spacing around arrows
     code = re.sub(r'\s*-->\s*', ' --> ', code)
     code = re.sub(r'\s*--\s*"([^"]+)"\s*-->\s*', ' -- "\\1" --> ', code)
     
+    # Fix subgraph syntax
+    code = re.sub(r'subgraph\s+"([^"]+)"\s*\n', 'subgraph "\\1"\n', code)
+    
+    # Remove any invalid characters
+    code = re.sub(r'[^\w\s\{\}\[\]\(\)"\'_\-/>:;=,.]', '_', code)
+    
     return code
 
 def display_mermaid_preview(mermaid_code: str):
     """Display a preview of the Mermaid diagram."""
-    # Create HTML for Mermaid preview
+    # Create HTML for Mermaid preview with specific configuration
     html = f"""
         <div class="mermaid">
         {mermaid_code}
         </div>
         <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
         <script>
-            mermaid.initialize({{ startOnLoad: true }});
+            mermaid.initialize({{
+                startOnLoad: true,
+                theme: 'dark',
+                securityLevel: 'loose',
+                flowchart: {{
+                    curve: 'basis',
+                    padding: 10
+                }}
+            }});
         </script>
     """
     st.components.v1.html(html, height=600)
