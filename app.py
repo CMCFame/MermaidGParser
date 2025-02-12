@@ -23,8 +23,8 @@ def initialize_gemini():
     genai.configure(api_key=api_key)
     # Use gemini-pro for text and gemini-pro-vision for images
     models = {
-        'text': genai.GenerativeModel('gemini-pro'),
-        'vision': genai.GenerativeModel('gemini-pro-vision')
+        'text': genai.GenerativeModel('gemini-1.5-flash'),
+        'vision': genai.GenerativeModel('gemini-1.5-flash')
     }
     return models
 
