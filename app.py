@@ -84,35 +84,74 @@ def get_gemini_response(
 
 def create_prompt(context: str, input_type: str) -> str:
     """Create the prompt based on input type."""
-    base_prompt = f"""Analyze the following {input_type} and create a Mermaid diagram that represents the architecture:
+    base_prompt = f"""You are a Mermaid diagram expert. Analyze the following {input_type} and create a Mermaid flowchart that EXACTLY represents the content, following these strict rules:
 
-    Follow these steps:
-    1. Initial Analysis:
-       - Identify key components and their relationships
-       - Determine the flow direction (TD or LR)
-       - Identify system boundaries and categories
+    1. START YOUR RESPONSE WITH: ```mermaid
+    2. Use this exact first line: graph TD
+    3. Preserve ALL text from the input VERBATIM - do not paraphrase or modify text
+    4. Follow these syntax rules:
+       - Node IDs must be unique letters (A, B, C, etc.)
+       - Text must be in square brackets: [Your Text Here]
+       - Connections use -->
+       - For conditional paths, use -- "condition" -->
+       - Subgraphs must be properly closed with end
+       - No spaces in subgraph names, use quotes for multiple words
+       - Remove any parentheses () from node texts unless part of the original text
+       - No special characters in node text that could break Mermaid syntax
     
-    2. Component Identification:
-       - List all services/components
-       - Categorize them by type (Compute, Storage, Network, etc.)
-       - Map to appropriate cloud services if applicable
+    5. For visual elements:
+       - Use proper subgraph syntax:
+         subgraph "Name"
+         content
+         end
+       - Direction should be TD (top-down) unless specified otherwise
+       - Use diamonds {} for decision nodes
+       - Use rectangles [] for process nodes
     
-    3. Connection Analysis:
-       - Document all interactions
-       - Note data flow directions
-       - Identify protocols or methods
+    6. Example of correct syntax:
+       ```mermaid
+       graph TD
+           A[Start] --> B{Decision}
+           B -- "Yes" --> C[Process]
+           B -- "No" --> D[End]
+           subgraph "Process Group"
+               C --> E[Next Step]
+           end
+       ```
+
+    7. Important rules:
+       - PRESERVE ALL ORIGINAL TEXT
+       - Use EXACT spacing and indentation
+       - No extra formatting or styling
+       - No explanatory text outside the diagram
+       - Must be valid Mermaid syntax
     
-    Create a Mermaid diagram that:
-    1. Uses clear, logical structure
-    2. Shows all components and relationships
-    3. Uses appropriate Mermaid syntax
-    4. Groups related components
-    5. Shows clear direction of flow
-    
-    Context for analysis: {context}
-    
-    Respond with ONLY the Mermaid code, no explanations."""
+    Here's the content to convert: {context}
+
+    Generate ONLY the Mermaid code, no explanations or additional text."""
     return base_prompt
+
+def clean_mermaid_code(code: str) -> str:
+    """Clean and validate Mermaid code."""
+    # Remove any surrounding markdown code blocks
+    code = re.sub(r'^```mermaid\s*\n', '', code)
+    code = re.sub(r'\n```$', '', code)
+    
+    # Ensure it starts with graph TD if not specified otherwise
+    if not re.match(r'^\s*(graph|flowchart)\s+(TD|LR|TB|RL|BT)', code):
+        code = 'graph TD\n' + code
+    
+    # Fix common syntax issues
+    code = code.replace('( ', '(')  # Remove space after opening parenthesis
+    code = code.replace(' )', ')')  # Remove space before closing parenthesis
+    code = code.replace('[ ', '[')  # Remove space after opening bracket
+    code = code.replace(' ]', ']')  # Remove space before closing bracket
+    
+    # Ensure proper spacing around arrows
+    code = re.sub(r'\s*-->\s*', ' --> ', code)
+    code = re.sub(r'\s*--\s*"([^"]+)"\s*-->\s*', ' -- "\\1" --> ', code)
+    
+    return code
 
 def display_mermaid_preview(mermaid_code: str):
     """Display a preview of the Mermaid diagram."""
@@ -182,20 +221,25 @@ def main():
     if mermaid_code:
         st.header("Generated Diagram")
         
+        # Clean and validate the code
+        cleaned_code = clean_mermaid_code(mermaid_code)
+        
         # Show the Mermaid preview
         try:
-            display_mermaid_preview(mermaid_code)
+            display_mermaid_preview(cleaned_code)
         except Exception as e:
             st.error(f"Error displaying preview: {str(e)}")
+            st.error("Raw preview error - check syntax:")
+            st.code(cleaned_code)
         
         # Show the raw Mermaid code
         with st.expander("Show Mermaid Code"):
-            st.code(mermaid_code, language="mermaid")
+            st.code(cleaned_code, language="mermaid")
             
         # Add download button for the Mermaid code
         st.download_button(
             label="Download Mermaid Code",
-            data=mermaid_code,
+            data=cleaned_code,
             file_name="diagram.mmd",
             mime="text/plain"
         )
