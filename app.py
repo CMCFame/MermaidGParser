@@ -21,8 +21,8 @@ def initialize_gemini():
     api_key = st.secrets["GOOGLE_API_KEY"]
     genai.configure(api_key=api_key)
     models = {
-        'text': genai.GenerativeModel('gemini-pro'),
-        'vision': genai.GenerativeModel('gemini-pro-vision')
+        'text': genai.GenerativeModel('gemini-1.5-flash'),
+        'vision': genai.GenerativeModel('gemini-1.5-flash')
     }
     return models
 
