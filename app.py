@@ -17,11 +17,9 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialize Gemini API
 def initialize_gemini():
     api_key = st.secrets["GOOGLE_API_KEY"]
     genai.configure(api_key=api_key)
-    # Use gemini-1.5-flash for faster processing
     models = {
         'text': genai.GenerativeModel('gemini-1.5-flash'),
         'vision': genai.GenerativeModel('gemini-1.5-flash')
@@ -41,6 +39,45 @@ def extract_youtube_id(url):
     youtube_regex = r'(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})'
     match = re.search(youtube_regex, url)
     return match.group(1) if match else None
+
+def handle_youtube_url(url: str, model) -> str:
+    """Process YouTube URL and generate diagram."""
+    # Extract video ID
+    video_id = extract_youtube_id(url)
+    if not video_id:
+        raise ValueError("Invalid YouTube URL")
+        
+    # Create specific prompt for video content
+    video_prompt = f"""Analyze this YouTube video and create a clear flowchart diagram.
+    URL: {url}
+    
+    Create a Mermaid flowchart following these exact rules:
+    1. Use ONLY 'flowchart TD' as the first line
+    2. Each node should be concise and clear
+    3. Use proper Mermaid syntax:
+       - Nodes: A["Text"]
+       - Decisions: A{{"Question"}}
+       - Connections: A --> B
+       - Conditions: A -- "Yes" --> B
+    
+    Example format:
+    flowchart TD
+        A["Start"] --> B{{"Decision"}}
+        B -- "Yes" --> C["Action"]
+        B -- "No" --> D["Alternative"]
+        C --> E["End"]
+        D --> E
+    
+    Convert the video content into this format, focusing on the main flow and key decision points."""
+    
+    # Get response from model
+    response = get_gemini_response(model, video_prompt, 
+                                 GenerationConfig(temperature=0.2, max_output_tokens=2048))
+    
+    # Clean response
+    cleaned_response = clean_mermaid_code(response)
+    
+    return cleaned_response
 
 def get_gemini_response(
     model,
@@ -86,7 +123,7 @@ def create_prompt(context: str, input_type: str) -> str:
     """Create the prompt based on input type."""
     base_prompt = f"""You are a Mermaid diagram expert. Analyze the following {input_type} and create a Mermaid flowchart that EXACTLY represents the content, following these strict rules:
 
-    1. Always start with: flowchart TD
+    1. Always start with ONLY: flowchart TD
     2. For line breaks in node text, use ` (backtick) NOT \n or _n
     3. Follow these syntax rules:
        - Node text must be in quotes: A["Text here"]
@@ -95,15 +132,13 @@ def create_prompt(context: str, input_type: str) -> str:
        - Conditions use quotes: A -- "condition" --> B
        - Subgraphs must have quoted names: subgraph "Name"
 
-    Example of correct syntax:
-    ```mermaid
+    Example:
     flowchart TD
         subgraph "Main Process"
             A["First line`Second line`Third line"] --> B{{"Decision"}}
             B -- "Yes" --> C["Process"] & D["Next Step"]
             B -- "No" --> E["End"]
         end
-    ```
 
     Rules for text formatting:
     - Replace any \n or _n with ` for line breaks
@@ -113,52 +148,51 @@ def create_prompt(context: str, input_type: str) -> str:
 
     Here's the content to convert: {context}
 
-    Generate ONLY the Mermaid code, no explanations."""
+    Generate ONLY the flowchart code, no markdown blocks or explanations."""
     return base_prompt
 
 def clean_mermaid_code(code: str) -> str:
     """Clean and validate Mermaid code."""
-    # Remove markdown code blocks and extra headers
-    code = code.replace('```mermaid', '').replace('```', '')
-    code = re.sub(r'^flowchart TD\s*flowchart TD', 'flowchart TD', code)
-    code = re.sub(r'^graph TD\s*flowchart TD', 'flowchart TD', code)
+    # Remove any content before flowchart TD
+    if 'flowchart TD' in code:
+        code = code[code.find('flowchart TD'):]
     
-    # Ensure it starts with flowchart TD
-    if not code.strip().startswith('flowchart TD'):
+    # Remove markdown and mermaid tags
+    code = re.sub(r'```.*?```', '', code, flags=re.DOTALL)
+    code = code.replace('```mermaid', '').replace('```', '')
+    code = code.replace('mermaid', '')
+    
+    # Ensure single flowchart TD
+    code = re.sub(r'flowchart TD\s+flowchart TD', 'flowchart TD', code)
+    code = code.strip()
+    
+    if not code.startswith('flowchart TD'):
         code = 'flowchart TD\n' + code
     
-    # Fix line breaks
-    code = re.sub(r'\\n|_n', '`', code)
-    
-    # Clean up node references and syntax
-    lines = code.split('\n')
+    # Process line by line
+    lines = [line.strip() for line in code.split('\n') if line.strip()]
     cleaned_lines = []
+    
     for line in lines:
-        # Skip empty lines
-        if not line.strip():
+        # Skip duplicate headers
+        if line == 'flowchart TD' and cleaned_lines and cleaned_lines[0] == 'flowchart TD':
             continue
-        # Remove spaces before node brackets
+            
+        # Clean up node syntax
         line = re.sub(r'\s+\[', '[', line)
-        # Fix node definitions
         line = re.sub(r'\[([^\]"]+)\]', lambda m: f'["{m.group(1).strip()}"]', line)
-        # Fix decision nodes
-        line = re.sub(r'\{([^}]+)\}', lambda m: f'{{{{{m.group(1).strip()}}}}}', line)
-        # Ensure proper arrow spacing
+        line = re.sub(r'\{\{([^}]+)\}\}', lambda m: f'{{{{{m.group(1).strip()}}}}}', line)
+        
+        # Fix arrows and conditions
         line = re.sub(r'\s*-->\s*', ' --> ', line)
         line = re.sub(r'\s*--\s*"([^"]+)"\s*-->\s*', ' -- "\\1" --> ', line)
+        
+        # Remove semicolons at line ends
+        line = line.rstrip(';')
+        
         cleaned_lines.append(line)
     
-    code = '\n'.join(cleaned_lines)
-    
-    # Remove any duplicate quotes
-    code = re.sub(r'"{2,}', '"', code)
-    
-    # Clean up any remaining syntax issues
-    code = code.replace('( ', '(').replace(' )', ')')
-    code = code.replace('[ ', '[').replace(' ]', ']')
-    code = code.replace('{ ', '{').replace(' }', '}')
-    
-    return code.strip()
+    return '\n'.join(cleaned_lines)
 
 def display_mermaid_preview(mermaid_code: str):
     """Display a preview of the Mermaid diagram."""
@@ -227,12 +261,14 @@ def main():
         url = st.text_input("Enter YouTube URL")
         if url and st.button("Generate Diagram"):
             with st.spinner("Processing video..."):
-                video_id = extract_youtube_id(url)
-                if video_id:
-                    prompt = create_prompt(f"YouTube video: {url}", "video")
-                    mermaid_code = get_gemini_response(models['text'], prompt)
-                else:
-                    st.error("Invalid YouTube URL")
+                try:
+                    mermaid_code = handle_youtube_url(url, models['text'])
+                    if not mermaid_code:
+                        st.error("Could not generate diagram from video")
+                except ValueError as e:
+                    st.error(str(e))
+                except Exception as e:
+                    st.error(f"Error processing video: {str(e)}")
     
     # Display results
     if mermaid_code:
