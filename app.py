@@ -17,11 +17,9 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialize Gemini API
 def initialize_gemini():
     api_key = st.secrets["GOOGLE_API_KEY"]
     genai.configure(api_key=api_key)
-    # Use gemini-1.5-flash for faster processing
     models = {
         'text': genai.GenerativeModel('gemini-1.5-flash'),
         'vision': genai.GenerativeModel('gemini-1.5-flash')
@@ -86,7 +84,7 @@ def create_prompt(context: str, input_type: str) -> str:
     """Create the prompt based on input type."""
     base_prompt = f"""You are a Mermaid diagram expert. Analyze the following {input_type} and create a Mermaid flowchart that EXACTLY represents the content, following these strict rules:
 
-    1. Always start with: flowchart TD
+    1. Always start with ONLY: flowchart TD
     2. For line breaks in node text, use ` (backtick) NOT \n or _n
     3. Follow these syntax rules:
        - Node text must be in quotes: A["Text here"]
@@ -96,14 +94,12 @@ def create_prompt(context: str, input_type: str) -> str:
        - Subgraphs must have quoted names: subgraph "Name"
 
     Example of correct syntax:
-    ```mermaid
     flowchart TD
         subgraph "Main Process"
             A["First line`Second line`Third line"] --> B{{"Decision"}}
             B -- "Yes" --> C["Process"] & D["Next Step"]
             B -- "No" --> E["End"]
         end
-    ```
 
     Rules for text formatting:
     - Replace any \n or _n with ` for line breaks
@@ -113,18 +109,29 @@ def create_prompt(context: str, input_type: str) -> str:
 
     Here's the content to convert: {context}
 
-    Generate ONLY the Mermaid code, no explanations."""
+    Generate ONLY the flowchart code, no markdown blocks or explanations."""
     return base_prompt
 
 def clean_mermaid_code(code: str) -> str:
     """Clean and validate Mermaid code."""
-    # Remove markdown code blocks and extra headers
-    code = code.replace('```mermaid', '').replace('```', '')
-    code = re.sub(r'^flowchart TD\s*flowchart TD', 'flowchart TD', code)
-    code = re.sub(r'^graph TD\s*flowchart TD', 'flowchart TD', code)
+    # First, clean all variations of headers
+    header_patterns = [
+        'mermaid',
+        '```mermaid',
+        '```',
+        '^flowchart TD\s*mermaid',
+        '^graph TD\s*mermaid'
+    ]
     
-    # Ensure it starts with flowchart TD
-    if not code.strip().startswith('flowchart TD'):
+    # Remove all header variations
+    for pattern in header_patterns:
+        code = re.sub(pattern, '', code, flags=re.MULTILINE)
+    
+    # Ensure only one flowchart TD at the start
+    code = re.sub(r'^flowchart TD\s*flowchart TD', 'flowchart TD', code)
+    code = code.strip()
+    
+    if not code.startswith('flowchart TD'):
         code = 'flowchart TD\n' + code
     
     # Fix line breaks
@@ -134,7 +141,6 @@ def clean_mermaid_code(code: str) -> str:
     lines = code.split('\n')
     cleaned_lines = []
     for line in lines:
-        # Skip empty lines
         if not line.strip():
             continue
         # Remove spaces before node brackets
