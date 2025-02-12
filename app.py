@@ -21,7 +21,7 @@ st.set_page_config(
 def initialize_gemini():
     api_key = st.secrets["GOOGLE_API_KEY"]
     genai.configure(api_key=api_key)
-    # Use gemini-pro for text and gemini-pro-vision for images
+    # Use gemini-1.5-flash for faster processing
     models = {
         'text': genai.GenerativeModel('gemini-1.5-flash'),
         'vision': genai.GenerativeModel('gemini-1.5-flash')
@@ -86,48 +86,34 @@ def create_prompt(context: str, input_type: str) -> str:
     """Create the prompt based on input type."""
     base_prompt = f"""You are a Mermaid diagram expert. Analyze the following {input_type} and create a Mermaid flowchart that EXACTLY represents the content, following these strict rules:
 
-    1. WE WILL CREATE MERMAID CODE (MERMAID JS) 
-    2. Use this exact first line: flowchart TD
-    3. Preserve ALL text from the input VERBATIM - do not paraphrase or modify text
-    4. Follow these syntax rules:
-       - Node IDs must be unique letters or alphanumeric (A, B1, C2, etc.)
-       - Regular nodes: A[Text Here]
-       - Decision nodes: A{{Text Here}}  
-       - Connections use -->
-       - For conditional paths, use -- "condition" -->
-       - Subgraphs must be properly closed with end
-       - No spaces in subgraph names, use underscore or quotes
-       - No special characters in node text that could break Mermaid syntax
-    
-    5. For visual elements:
-       - Use proper subgraph syntax:
-         subgraph "Name"
-         content
-         end
-       - Direction should be TD (top-down) unless specified otherwise
-       - For decision nodes, always use double curly braces: {{}}
-       - For process nodes, use regular brackets: []
-    
-    6. Example of correct syntax:
-       flowchart TD
-           A[Start] --> B{{Decision}}
-           B -- "Yes" --> C[Process]
-           B -- "No" --> D[End]
-           subgraph "Process_Group"
-               C --> E[Next Step]
-           end
-       ```
+    1. Always start with: flowchart TD
+    2. For line breaks in node text, use ` (backtick) NOT \n or _n
+    3. Follow these syntax rules:
+       - Node text must be in quotes: A["Text here"]
+       - Decision nodes use double curly braces: A{{"Decision"}}
+       - Use & for multiple connections: A --> B & C
+       - Conditions use quotes: A -- "condition" --> B
+       - Subgraphs must have quoted names: subgraph "Name"
 
-    7. Important rules:
-       - PRESERVE ALL ORIGINAL TEXT
-       - Use EXACT spacing and indentation
-       - No extra formatting or styling
-       - No explanatory text outside the diagram
-       - Must be valid Mermaid syntax
-    
+    Example of correct syntax:
+    ```mermaid
+    flowchart TD
+        subgraph "Main Process"
+            A["First line`Second line`Third line"] --> B{{"Decision"}}
+            B -- "Yes" --> C["Process"] & D["Next Step"]
+            B -- "No" --> E["End"]
+        end
+    ```
+
+    Rules for text formatting:
+    - Replace any \n or _n with ` for line breaks
+    - Keep original text but remove special characters
+    - Maintain exact spacing in node text
+    - Use quotes for all node text and subgraph names
+
     Here's the content to convert: {context}
 
-    Generate ONLY the Mermaid code, no explanations or additional text."""
+    Generate ONLY the Mermaid code, no explanations."""
     return base_prompt
 
 def clean_mermaid_code(code: str) -> str:
@@ -136,46 +122,45 @@ def clean_mermaid_code(code: str) -> str:
     code = re.sub(r'^```mermaid\s*\n', '', code)
     code = re.sub(r'\n```$', '', code)
     
-    # Ensure it starts with graph TD if not specified otherwise
-    if not re.match(r'^\s*(graph|flowchart)\s+(TD|LR|TB|RL|BT)', code):
-        code = 'graph TD\n' + code
+    # Ensure it starts with flowchart TD
+    if not re.match(r'^\s*(flowchart|graph)\s+(TD|LR|TB|RL|BT)', code):
+        code = 'flowchart TD\n' + code
     
-    # Fix common syntax issues
+    # Fix line breaks and common syntax issues
+    code = re.sub(r'\\n|_n', '`', code)  # Replace \n and _n with backtick
     code = code.replace('( ', '(')  # Remove space after opening parenthesis
     code = code.replace(' )', ')')  # Remove space before closing parenthesis
     code = code.replace('[ ', '[')  # Remove space after opening bracket
     code = code.replace(' ]', ']')  # Remove space before closing bracket
-    code = code.replace('{', '{{')  # Fix decision node syntax
-    code = code.replace('}', '}}')  # Fix decision node syntax
+    
+    # Ensure proper node text quotes
+    code = re.sub(r'\[([^\]"]+)\]', r'["\1"]', code)  # Add quotes if missing in node text
+    
+    # Fix decision node syntax
+    code = re.sub(r'\{\{([^}]+)\}\}', r'{{""\1""}}', code)  # Add quotes in decision nodes if missing
     
     # Ensure proper spacing around arrows
     code = re.sub(r'\s*-->\s*', ' --> ', code)
     code = re.sub(r'\s*--\s*"([^"]+)"\s*-->\s*', ' -- "\\1" --> ', code)
     
     # Fix subgraph syntax
-    code = re.sub(r'subgraph\s+"([^"]+)"\s*\n', 'subgraph "\\1"\n', code)
-    
-    # Remove any invalid characters
-    code = re.sub(r'[^\w\s\{\}\[\]\(\)"\'_\-/>:;=,.]', '_', code)
+    code = re.sub(r'subgraph\s+([^"\n]+)(?!\[)', r'subgraph "\1"', code)
     
     return code
 
 def display_mermaid_preview(mermaid_code: str):
     """Display a preview of the Mermaid diagram."""
-    # Create HTML for Mermaid preview with specific configuration
     html = f"""
         <div class="mermaid">
         {mermaid_code}
         </div>
-        <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js"></script>
         <script>
             mermaid.initialize({{
                 startOnLoad: true,
                 theme: 'dark',
-                securityLevel: 'loose',
                 flowchart: {{
-                    curve: 'basis',
-                    padding: 10
+                    curve: 'basis'
                 }}
             }});
         </script>
