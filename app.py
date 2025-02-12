@@ -17,19 +17,16 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialize Gemini API
 def initialize_gemini():
     api_key = st.secrets["GOOGLE_API_KEY"]
     genai.configure(api_key=api_key)
-    # Use gemini-flash for text and images
     models = {
-        'text': genai.GenerativeModel('gemini-1.5-flash'),
-        'vision': genai.GenerativeModel('gemini-1.5-flash')
+        'text': genai.GenerativeModel('gemini-pro'),
+        'vision': genai.GenerativeModel('gemini-pro-vision')
     }
     return models
 
 def extract_text_from_pdf(pdf_file):
-    """Extract text from uploaded PDF file."""
     pdf_reader = PyPDF2.PdfReader(pdf_file)
     text = ""
     for page in pdf_reader.pages:
@@ -37,7 +34,6 @@ def extract_text_from_pdf(pdf_file):
     return text
 
 def extract_youtube_id(url):
-    """Extract YouTube video ID from URL."""
     youtube_regex = r'(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})'
     match = re.search(youtube_regex, url)
     return match.group(1) if match else None
@@ -51,7 +47,6 @@ def get_gemini_response(
     ),
     stream: bool = True
 ) -> str:
-    """Generate a response from the Gemini model."""
     safety_settings = {
         HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
         HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_ONLY_HIGH,
@@ -83,101 +78,94 @@ def get_gemini_response(
         return ""
 
 def create_prompt(context: str, input_type: str) -> str:
-    """Create the prompt based on input type."""
-    base_prompt = f"""You are a Mermaid diagram expert. Analyze the following {input_type} and create a Mermaid flowchart that EXACTLY represents the content, following these strict rules:
+    base_prompt = f"""You are a Mermaid diagram expert. Analyze the following {input_type} and create a Mermaid flowchart, following these strict rules:
 
-    1. START YOUR RESPONSE WITH: ```mermaid
-    2. Use this exact first line: graph TD
-    3. Preserve ALL text from the input VERBATIM - do not paraphrase or modify text
-    4. Follow these syntax rules:
-       - Node IDs must be unique letters or alphanumeric (A, B1, C2, etc.)
-       - Regular nodes: A[Text Here]
-       - Decision nodes: A{{Text Here}}  
-       - Connections use -->
-       - For conditional paths, use -- "condition" -->
-       - Subgraphs must be properly closed with end
-       - No spaces in subgraph names, use underscore or quotes
-       - No special characters in node text that could break Mermaid syntax
-    
-    5. For visual elements:
-       - Use proper subgraph syntax:
-         subgraph "Name"
-         content
-         end
-       - Direction should be TD (top-down) unless specified otherwise
-       - For decision nodes, always use double curly braces: {{}}
-       - For process nodes, use regular brackets: []
-    
-    6. Example of correct syntax:
+    1. ALWAYS start with: flowchart TD
+
+    2. Syntax Rules:
+       - Use unique IDs for nodes (A1, B2, etc.)
+       - Regular nodes: A["Text here"]
+       - Decision nodes: A{{"Decision text"}}
+       - Multiple arrows: A --> B & C & D
+       - Conditional paths: A -- "condition" --> B
+       - Replace newlines with spaces in node text
+       - Quotes around all node text
+       - Clean node text: remove special chars, replace _ with space
+
+    3. Subgraph Syntax:
+       subgraph name["Display Name"]
+           content
+       end
+
+    4. Here's a complete example:
        ```mermaid
-       graph TD
-           A[Start] --> B{{Decision}}
-           B -- "Yes" --> C[Process]
-           B -- "No" --> D[End]
-           subgraph "Process_Group"
-               C --> E[Next Step]
+       flowchart TD
+           subgraph process["Main Process"]
+               A["Start Here"] --> B{{"Make Decision"}}
+               B -- "Yes" --> C["Process A"] & D["Process B"]
+               B -- "No" --> E["End Process"]
            end
+           C --> F["Final Step"]
+           D --> F
+           E --> F
        ```
 
-    7. Important rules:
-       - PRESERVE ALL ORIGINAL TEXT
-       - Use EXACT spacing and indentation
-       - No extra formatting or styling
-       - No explanatory text outside the diagram
-       - Must be valid Mermaid syntax
-    
-    Here's the content to convert: {context}
+    5. Important Rules:
+       - Replace _n or \n with spaces in text
+       - Always use quotes around node text ["text"] and {{"text"}}
+       - No special characters in node IDs
+       - Multiple connections use & symbol
+       - Keep node text readable and clean
 
-    Generate ONLY the Mermaid code, no explanations or additional text."""
+    Convert this content: {context}
+
+    Respond with ONLY the Mermaid code."""
     return base_prompt
 
 def clean_mermaid_code(code: str) -> str:
-    """Clean and validate Mermaid code."""
-    # Remove any surrounding markdown code blocks
+    # Remove markdown blocks
     code = re.sub(r'^```mermaid\s*\n', '', code)
     code = re.sub(r'\n```$', '', code)
     
-    # Ensure it starts with graph TD if not specified otherwise
-    if not re.match(r'^\s*(graph|flowchart)\s+(TD|LR|TB|RL|BT)', code):
-        code = 'graph TD\n' + code
+    # Ensure correct start
+    if not code.strip().startswith('flowchart TD'):
+        code = 'flowchart TD\n' + code
     
     # Fix common syntax issues
-    code = code.replace('( ', '(')  # Remove space after opening parenthesis
-    code = code.replace(' )', ')')  # Remove space before closing parenthesis
-    code = code.replace('[ ', '[')  # Remove space after opening bracket
-    code = code.replace(' ]', ']')  # Remove space before closing bracket
-    code = code.replace('{', '{{')  # Fix decision node syntax
-    code = code.replace('}', '}}')  # Fix decision node syntax
+    code = re.sub(r'_n|\\n', ' ', code)  # Replace newline indicators with spaces
+    code = re.sub(r'\s+', ' ', code)  # Normalize spaces
     
-    # Ensure proper spacing around arrows
+    # Fix node syntax
+    code = re.sub(r'\[([^\]]+)\]', lambda m: f'["{m.group(1).strip()}"]', code)  # Add quotes to node text
+    code = re.sub(r'\{\{([^\}]+)\}\}', lambda m: f'{{""{m.group(1).strip()}""}}', code)  # Fix decision nodes
+    
+    # Fix subgraph syntax
+    code = re.sub(r'subgraph\s+([^\n\[]+)(?!\[)', lambda m: f'subgraph {m.group(1)}[""{m.group(1)}""]', code)
+    
+    # Clean up arrows and connections
     code = re.sub(r'\s*-->\s*', ' --> ', code)
     code = re.sub(r'\s*--\s*"([^"]+)"\s*-->\s*', ' -- "\\1" --> ', code)
     
-    # Fix subgraph syntax
-    code = re.sub(r'subgraph\s+"([^"]+)"\s*\n', 'subgraph "\\1"\n', code)
-    
-    # Remove any invalid characters
-    code = re.sub(r'[^\w\s\{\}\[\]\(\)"\'_\-/>:;=,.]', '_', code)
+    # Remove any remaining invalid characters
+    code = re.sub(r'[^\w\s\{\}\[\]"\'_\-/>&;=,.]', ' ', code)
     
     return code
 
 def display_mermaid_preview(mermaid_code: str):
-    """Display a preview of the Mermaid diagram."""
-    # Create HTML for Mermaid preview with specific configuration
     html = f"""
         <div class="mermaid">
         {mermaid_code}
         </div>
-        <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js"></script>
         <script>
             mermaid.initialize({{
                 startOnLoad: true,
                 theme: 'dark',
-                securityLevel: 'loose',
                 flowchart: {{
-                    curve: 'basis',
-                    padding: 10
-                }}
+                    curve: 'linear',
+                    defaultRenderer: 'dagre-d3'
+                }},
+                securityLevel: 'loose'
             }});
         </script>
     """
@@ -187,10 +175,8 @@ def main():
     st.title("Architecture Diagram Generator")
     st.write("Convert your architecture specifications into Mermaid diagrams")
     
-    # Initialize Gemini models
     models = initialize_gemini()
     
-    # Input section
     st.header("Input")
     input_type = st.selectbox(
         "Choose input type:",
@@ -233,14 +219,11 @@ def main():
                 else:
                     st.error("Invalid YouTube URL")
     
-    # Display results
     if mermaid_code:
         st.header("Generated Diagram")
         
-        # Clean and validate the code
         cleaned_code = clean_mermaid_code(mermaid_code)
         
-        # Show the Mermaid preview
         try:
             display_mermaid_preview(cleaned_code)
         except Exception as e:
@@ -248,11 +231,9 @@ def main():
             st.error("Raw preview error - check syntax:")
             st.code(cleaned_code)
         
-        # Show the raw Mermaid code
         with st.expander("Show Mermaid Code"):
             st.code(cleaned_code, language="mermaid")
             
-        # Add download button for the Mermaid code
         st.download_button(
             label="Download Mermaid Code",
             data=cleaned_code,
